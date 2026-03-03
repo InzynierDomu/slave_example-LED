@@ -190,7 +190,7 @@ void loop()
     break;
     case Shield_state::shoted:
     {
-      if (millis() - shotedTime >= 80)
+      if (millis() - shotedTime >= 120)
       {
         state = Shield_state::none;
         setAll(0, 0, 0);
@@ -199,13 +199,4 @@ void loop()
     default:
       break;
   }
-
-
-  // w pętli jest sprawdzane czy doszła wiadomość, jak tak, to wysyła w odpowiedzi swoją.
-  // if (msg_recived)
-  // {
-  //   //   send_msg();
-  //   // setAll(0, 0, 255);
-  //   msg_recived = false;
-  // }
 }
