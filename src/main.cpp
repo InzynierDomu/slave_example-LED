@@ -3,14 +3,14 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-enum Slave_state
+enum Shield_state
 {
+  not_active = 0,
   none,
   ready,
-  hited,
-  hit,
+  shoted,
   hostage,
-  wait
+  waiting,
 };
 
 #define LED_PIN 2 // tutaj wpisz pin DATA Twojego paska
@@ -18,7 +18,7 @@ enum Slave_state
 #define KNOCK_PIN 4 // sygnał z czujnika
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
-
+Shield_state state;
 void setAll(uint8_t r, uint8_t g, uint8_t b)
 {
   for (int i = 0; i < LED_COUNT; i++)
@@ -31,8 +31,7 @@ void setAll(uint8_t r, uint8_t g, uint8_t b)
 void flash(uint8_t r, uint8_t g, uint8_t b, int ms)
 {
   setAll(r, g, b);
-  delay(ms);
-  setAll(255, 0, 0); // powrót do stałej  czerwieni
+  setAll(0, 0, 0); // powrót do stałej  czerwieni
 }
 
 
@@ -41,30 +40,33 @@ volatile bool msg_recived;
 // Struktura wiadomości (ta sama co w masterze)
 typedef struct
 {
-  int id;
   uint8_t value;
 } message_t;
-
-message_t myData;
 
 uint8_t masterMac[] = {0x20, 0x6E, 0xF1, 0x87, 0xBA, 0x9C}; // MAC mastera - trzeba odczyta i tu wipsać
 
 void send_msg()
 {
-  myData.id = 2; // ID slave
+  message_t myData;
   myData.value = 1; // dummy value
-  flash(255, 255, 255, 80); // błysk (BIAŁY, 80ms)
+                    // błysk (BIAŁY, 80ms)
   // strcpy(myData.msg, "Slave OK"); // dummy text
 
   // ID służy żeby sobie rozróżnić od którego urządzenia przyszła wiadomość, dummy value i text tak dla przykładu, można zmienić całą
   // strukturę i tam wpisywać jakieś wartości które są przechowywane przez urządzenie np. wartość jakiegoś czujnika i to wysyłać.
+
+  Serial.print("send to:");
+  for (size_t i = 0; i < 6; i++)
+  {
+    Serial.printf("%02X:", masterMac[i]);
+  }
 
   if (!esp_now_is_peer_exist(masterMac))
   {
     Serial.println("add peer");
     esp_now_peer_info_t peerInfo;
     memcpy(peerInfo.peer_addr, masterMac, 6);
-    peerInfo.channel = 1;
+    peerInfo.channel = 0;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo) != ESP_OK)
     {
@@ -92,6 +94,7 @@ void send_msg()
 // ta funkcja jest wywoływana jak przychodzi wiadomość po esp now, np. od mastera można wykorzsytać do czegoś np. myData.value, myData.msg
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
 {
+  message_t myData;
   memcpy(&myData, incomingData, sizeof(myData));
   Serial.print("received from: ");
   Serial.print(mac[0], HEX);
@@ -105,9 +108,20 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
   Serial.print(mac[4], HEX);
   Serial.print(":");
   Serial.println(mac[5], HEX);
-  Serial.printf("ID: %d, Value: %.2f", myData.id, myData.value);
+  Serial.printf("Value: %d", myData.value);
 
-  msg_recived = true;
+  // msg_recived = true;
+
+  state = Shield_state(myData.value);
+  switch (state)
+  {
+    case Shield_state::ready:
+      setAll(255, 0, 0);
+      break;
+
+    default:
+      break;
+  }
 }
 
 void setup()
@@ -116,42 +130,82 @@ void setup()
 
   WiFi.mode(WIFI_STA);
 
+  delay(1000);
+
   if (esp_now_init() != ESP_OK)
   {
     Serial.println("initialization error ESP-NOW");
   }
+  else
+  {
+    Serial.println("initialization ESP-NOW ok");
+  }
+
+  Serial.println("add peer");
+  esp_now_peer_info_t peerInfo;
+  memset(&peerInfo, 0, sizeof(peerInfo));
+
+  memcpy(peerInfo.peer_addr, masterMac, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+  esp_err_t adding_status = (esp_now_add_peer(&peerInfo));
+  Serial.print("adding status:");
+  Serial.println(adding_status);
+
+  if (adding_status != ESP_OK)
+  {
+    Serial.println("Failed to add peer");
+  }
 
   esp_now_register_recv_cb(OnDataRecv);
 
-  delay(1000);
 
   Serial.println("WiFi channel: " + String(WiFi.channel()));
   Serial.print("MAC: ");
   Serial.println(WiFi.macAddress());
 
-  {
-    pinMode(KNOCK_PIN, INPUT_PULLUP);
-    strip.begin();
-    setAll(255, 0, 0); // włącz czerwone na start
-    Serial.begin(115200);
-  }
+  pinMode(KNOCK_PIN, INPUT_PULLUP);
+  strip.begin();
+  setAll(0, 0, 0);
+  state = Shield_state::none; // włącz czerwone na start
 }
-void loop()
 
+unsigned long shotedTime = 0;
+void loop()
 {
-  if (digitalRead(KNOCK_PIN) == LOW)
-  { // stuknięcie = sygnał LOW
-    Serial.println("Uderzenie!");
-    send_msg();
-    flash(255, 255, 255, 80); // błysk (BIAŁY, 80ms)
-    delay(120); // anti-bounce (żeby jedno stuknięcie nie liczyło się wiele razy)
+  switch (state)
+  {
+    case Shield_state::ready:
+    {
+      if (digitalRead(KNOCK_PIN) == LOW)
+      { // stuknięcie = sygnał LOW
+        Serial.println("Uderzenie!");
+        send_msg();
+        setAll(255, 255, 255); // błysk (BIAŁY, 80ms)
+        shotedTime = millis();
+        // delay(120); // anti-bounce (żeby jedno stuknięcie nie liczyło się wiele razy)
+        state = Shield_state::shoted;
+      }
+    }
+    break;
+    case Shield_state::shoted:
+    {
+      if (millis() - shotedTime >= 80)
+      {
+        state = Shield_state::none;
+        setAll(0, 0, 0);
+      }
+    }
+    default:
+      break;
   }
 
 
   // w pętli jest sprawdzane czy doszła wiadomość, jak tak, to wysyła w odpowiedzi swoją.
-  if (msg_recived)
-  {
-    send_msg();
-    msg_recived = false;
-  }
+  // if (msg_recived)
+  // {
+  //   //   send_msg();
+  //   // setAll(0, 0, 255);
+  //   msg_recived = false;
+  // }
 }
