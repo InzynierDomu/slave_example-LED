@@ -66,7 +66,7 @@ void send_msg()
     Serial.println("add peer");
     esp_now_peer_info_t peerInfo;
     memcpy(peerInfo.peer_addr, masterMac, 6);
-    peerInfo.channel = 0;
+    peerInfo.channel = 1;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo) != ESP_OK)
     {
@@ -113,12 +113,15 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
   // msg_recived = true;
 
   state = Shield_state(myData.value);
+  Serial.printf(" -> state: %d\n", (int)state);
   switch (state)
   {
+    case Shield_state::not_active:
+      setAll(0, 0, 0);
+      break;
     case Shield_state::ready:
       setAll(255, 0, 0);
       break;
-
     default:
       break;
   }
@@ -146,7 +149,7 @@ void setup()
   memset(&peerInfo, 0, sizeof(peerInfo));
 
   memcpy(peerInfo.peer_addr, masterMac, 6);
-  peerInfo.channel = 0;
+  peerInfo.channel = 1;
   peerInfo.encrypt = false;
   esp_err_t adding_status = (esp_now_add_peer(&peerInfo));
   Serial.print("adding status:");
@@ -171,19 +174,37 @@ void setup()
 }
 
 unsigned long shotedTime = 0;
+unsigned long knockFellAt = 0;
+bool knockActive = false;
+bool knockFired = false;
+
 void loop()
 {
+  bool knock = (digitalRead(KNOCK_PIN) == LOW);
+  if (knock && !knockActive)
+  {
+    knockActive = true;
+    knockFired = false;
+    knockFellAt = millis();
+  }
+  if (!knock)
+  {
+    knockActive = false;
+    knockFired = false;
+  }
+  bool knockDebounced = knockActive && !knockFired && (millis() - knockFellAt >= 20);
+
   switch (state)
   {
     case Shield_state::ready:
     {
-      if (digitalRead(KNOCK_PIN) == LOW)
-      { // stuknięcie = sygnał LOW
+      if (knockDebounced)
+      {
+        knockFired = true;
         Serial.println("Uderzenie!");
         send_msg();
-        setAll(255, 255, 255); // błysk (BIAŁY, 80ms)
+        setAll(255, 255, 255);
         shotedTime = millis();
-        // delay(120); // anti-bounce (żeby jedno stuknięcie nie liczyło się wiele razy)
         state = Shield_state::shoted;
       }
     }
