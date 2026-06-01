@@ -28,12 +28,6 @@ void setAll(uint8_t r, uint8_t g, uint8_t b)
   strip.show();
 }
 
-void flash(uint8_t r, uint8_t g, uint8_t b, int ms)
-{
-  setAll(r, g, b);
-  setAll(0, 0, 0); // powrót do stałej  czerwieni
-}
-
 
 volatile bool msg_recived;
 
