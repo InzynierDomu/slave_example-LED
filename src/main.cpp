@@ -177,6 +177,7 @@ void loop()
   bool knock = (digitalRead(KNOCK_PIN) == LOW);
   if (knock && !knockActive)
   {
+    Serial.println("KNOCK raw LOW");
     knockActive = true;
     knockFired = false;
     knockFellAt = millis();
